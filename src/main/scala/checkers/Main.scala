@@ -1,9 +1,12 @@
 package checkers
 
+import cats.effect.{IO, IOApp}
 import checkers.ui.CheckersGUI
 
-object Main {
-  def main(args: Array[String]): Unit = {
-    CheckersGUI.main(args)
-  }
+object Main extends IOApp.Simple {
+  def run: IO[Unit] = for {
+    gui <- CheckersGUI.create
+    _ <- IO.delay(gui.visible = true)
+    _ <- IO.never
+  } yield ()
 }

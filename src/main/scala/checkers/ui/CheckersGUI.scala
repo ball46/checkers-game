@@ -1,95 +1,96 @@
 package checkers.ui
 
-import checkers.models.*
-import scalafx.Includes.*
-import scalafx.application.JFXApp3
-import scalafx.scene.Scene
-import scalafx.scene.input.MouseEvent
-import scalafx.scene.layout.*
-import scalafx.scene.paint.Color
-import scalafx.scene.shape.{Circle, Rectangle}
+import cats.effect._
+import cats.effect.std.Supervisor
+import cats.syntax.all._
+import checkers.models._
+import scala.swing._
+import scala.swing.event._
+import cats.effect.unsafe.implicits.global
 
-object CheckersGUI extends JFXApp3 {
-  private val SquareSize = 60
-  private val PieceRadius = 20.0
-  private var game = Game.initial
-  private var selectedPos: Option[Position] = None
+class CheckersGUI(supervisor: Supervisor[IO]) extends MainFrame {
+  private case class GameState(
+    game: Game,
+    selectedPosition: Option[Position] = None
+  )
+  
+  private case class UIError(message: String)
+  
+  // Use Ref for thread-safe state management
+  private val stateRef: Ref[IO, GameState] = 
+    Ref.of[IO, GameState](GameState(Game(Board.initial, White))).unsafeRunSync()
 
-  override def start(): Unit = {
-    stage = new JFXApp3.PrimaryStage {
-      title = "Scala Checkers"
-      scene = new Scene(SquareSize * 8, SquareSize * 8) {
-        root = new Pane {
-          children = createBoard() ++ createPieces()
-        }
-      }
-    }
-  }
+  // Convert state updates to IO
+  private def updateState(newState: GameState): IO[Unit] = for {
+    _ <- stateRef.set(newState)
+    _ <- IO.delay(repaint())
+  } yield ()
 
-  private def createBoard() = {
-    for {
-      boardX <- 0 until 8
-      boardY <- 0 until 8
-    } yield {
-      val square = new Rectangle {
-        x = boardX * SquareSize
-        y = boardY * SquareSize
-        width = SquareSize
-        height = SquareSize
-        fill = if ((boardX + boardY) % 2 == 0) Color.White else Color.Gray
-      }
+  // Convert move handling to IO
+  private def handleMove(from: Position, to: Position): IO[Either[UIError, Unit]] = for {
+    currentState <- stateRef.get
+    result <- IO.pure(currentState.game.makeMove(Move(from, to)))
+      .map(_.left.map(err => UIError(s"Invalid move: ${errorToMessage(err)}")))
+    _ <- result.traverse_(newGame => 
+      updateState(GameState(newGame)) *>
+      IO.delay(Dialog.showMessage(null, "Move completed", "Success", Dialog.Message.Info)))
+    _ <- result.swap.traverse_(err => 
+      IO.delay(Dialog.showMessage(null, err.message, "Error", Dialog.Message.Error)))
+  } yield result.void
 
-      square.onMouseClicked = (e: MouseEvent) => handleSquareClick(Position(boardX, boardY))
-      square
-    }
-  }
-
-  private def createPieces() = {
-    for {
-      x <- 0 until 8
-      y <- 0 until 8
-      piece <- game.board(Position(x, y))
-    } yield createPiece(x, y, piece)
-  }
-
-  private def createPiece(x: Int, y: Int, piece: Piece) = {
-    new Circle {
-      centerX = x * SquareSize + SquareSize / 2
-      centerY = y * SquareSize + SquareSize / 2
-      radius = PieceRadius
-      fill = piece.color match {
-        case White => Color.White
-        case Black => Color.Black
-      }
-      stroke = Color.Black
-      strokeWidth = 2
-    }
-  }
-
-  private def handleSquareClick(pos: Position): Unit = {
-    selectedPos match {
+  // Convert position selection to IO
+  private def handlePositionSelect(pos: Position): IO[Unit] = for {
+    state <- stateRef.get
+    _ <- state.selectedPosition match {
+      case Some(from) => 
+        handleMove(from, pos) *>
+        updateState(state.copy(selectedPosition = None))
+      case None if state.game.board(pos).toOption.flatten
+          .exists(_.color == state.game.currentPlayer) =>
+        updateState(state.copy(selectedPosition = Some(pos)))
       case None =>
-        if (game.board(pos).exists(_.color == game.currentPlayer)) {
-          selectedPos = Some(pos)
-          // TODO: Highlight selected piece
-        }
+        updateState(state.copy(selectedPosition = None))
+    }
+  } yield ()
 
-      case Some(from) =>
-        val move = Move(from, pos)
-        game.makeMove(move) match {
-          case Some(newGame) =>
-            game = newGame
-            updateBoard()
-          case None =>
-            println("Invalid move")
-        }
-        selectedPos = None
+  private def errorToMessage(error: GameError): String = error match {
+    case GameMovementError(boardError) => boardErrorToMessage(boardError)
+    case GameAlreadyOver => "Game is already over"
+  }
+
+  private def boardErrorToMessage(error: BoardError): String = error match {
+    case InvalidPosition(pos) => s"Invalid position: $pos"
+    case InvalidMove(move) => s"Invalid move: $move"
+    case WrongPlayer(color) => s"Wrong player: $color"
+  }
+
+  private def pixelToPosition(point: Point): Position = {
+    val squareSize = 50
+    Position(point.x / squareSize, point.y / squareSize)
+  }
+
+  contents = new BoardPanel {
+    preferredSize = new Dimension(400, 400)
+    
+    override def paintComponent(g: Graphics2D): Unit = {
+      super.paintComponent(g)
+      val state = stateRef.get.unsafeRunSync()
+      drawBoard(g, state.game.board, state.selectedPosition)
+    }
+
+    listenTo(mouse.clicks)
+    reactions += {
+      case MouseClicked(_, point, _, _, _) =>
+        val pos = pixelToPosition(point)
+        if (pos.isValid) 
+          supervisor.supervise(handlePositionSelect(pos)).unsafeRunSync()
     }
   }
+}
 
-  private def updateBoard(): Unit = {
-    val board = stage.scene().root.asInstanceOf[Pane]
-    board.children.clear()
-    board.children = createBoard() ++ createPieces()
-  }
+object CheckersGUI {
+  def create: IO[CheckersGUI] = 
+    Supervisor[IO].use { supervisor =>
+      IO.delay(new CheckersGUI(supervisor))
+    }
 }
