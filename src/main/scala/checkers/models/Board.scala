@@ -1,23 +1,30 @@
 package checkers.models
 
-case class Board(pieces: Vector[Vector[Option[Piece]]]) {
-  def apply(pos: Position): Option[Piece] =
-    if (pos.isValid) pieces(pos.y)(pos.x) else None
+sealed trait BoardError
+case class InvalidPosition(pos: Position) extends BoardError
+case class InvalidMove(move: Move) extends BoardError
+case class WrongPlayer(color: Color) extends BoardError
 
-  private def updated(pos: Position, piece: Option[Piece]): Board = {
-    if (!pos.isValid) this
-    else Board(pieces.updated(pos.y, pieces(pos.y).updated(pos.x, piece)))
-  }
+case class Board(pieces: Vector[Vector[Option[Piece]]]) {
+  def apply(pos: Position): Either[BoardError, Option[Piece]] = 
+    if (pos.isValid) Right(pieces(pos.y)(pos.x))
+    else Left(InvalidPosition(pos))
+
+  private def updated(pos: Position, piece: Option[Piece]): Either[BoardError, Board] =
+    if (!pos.isValid) Left(InvalidPosition(pos))
+    else Right(Board(pieces.updated(pos.y, pieces(pos.y).updated(pos.x, piece))))
 
   // ตรวจสอบว่าการเดินนั้นถูกกติกาทั้งหมดหรือไม่
   def isValidMove(move: Move, currentPlayer: Color): Boolean = {
     if (!move.isValid) false
     else {
-      val piece = apply(move.from)
-      piece.exists(p =>
-        p.color == currentPlayer &&
-          isValidDirection(move, p) &&
-          (if (move.isJump) canJump(move, currentPlayer) else canMove(move))
+      apply(move.from).fold(
+        _ => false, // กรณีเกิด error
+        _.exists(p => // กรณีสำเร็จ
+          p.color == currentPlayer &&
+            isValidDirection(move, p) &&
+            (if (move.isJump) canJump(move, currentPlayer) else canMove(move))
+        )
       )
     }
   }
@@ -34,30 +41,51 @@ case class Board(pieces: Vector[Vector[Option[Piece]]]) {
 
   // ตรวจสอบการเดินปกติ (1 ช่อง)
   private def canMove(move: Move): Boolean = {
-    apply(move.to).isEmpty &&
-      (move.from.x - move.to.x).abs == 1
+    apply(move.to).fold(
+      _ => false,
+      _.isEmpty
+    ) && (move.from.x - move.to.x).abs == 1
   }
 
   // ตรวจสอบการกินหมาก (2 ช่อง)
   private def canJump(move: Move, currentPlayer: Color): Boolean = {
     move.capturedPosition.exists { pos =>
-      apply(move.to).isEmpty && // ปลายทางต้องว่าง
-        apply(pos).exists(_.color != currentPlayer) // มีหมากฝ่ายตรงข้ามให้กิน
+      (for {
+        targetSquare <- apply(move.to)
+        capturedPiece <- apply(pos)
+      } yield {
+        targetSquare.isEmpty && // ปลายทางต้องว่าง
+          capturedPiece.exists(_.color != currentPlayer) // มีหมากฝ่ายตรงข้ามให้กิน
+      }).getOrElse(false)
     }
   }
 
   // ทำการเดินหมากและคืนค่า board ใหม่
-  def makeMove(move: Move, currentPlayer: Color): Option[Board] = {
-    if (!isValidMove(move, currentPlayer)) None
-    else Some {
-      val piece = apply(move.from).get
-      val updatedBoard = updated(move.from, None)
-        .updated(move.to, Some(shouldPromote(move.to, piece)))
-
-      move.capturedPosition.fold(updatedBoard) { pos =>
+  def makeMove(move: Move, currentPlayer: Color): Either[BoardError, Board] = {
+    def execute(piece: Piece) = for {
+      _ <- validateMove(move, piece, currentPlayer)
+      emptyBoard <- updated(move.from, None)
+      promotedPiece = shouldPromote(move.to, piece)
+      updatedBoard <- emptyBoard.updated(move.to, Some(promotedPiece))
+      finalBoard <- move.capturedPosition.fold[Either[BoardError, Board]](Right(updatedBoard)) { pos =>
         updatedBoard.updated(pos, None)
       }
-    }
+    } yield finalBoard
+
+    for {
+      currentPiece <- apply(move.from)
+      piece <- currentPiece.toRight(InvalidMove(move))
+      result <- execute(piece)
+    } yield result
+  }
+
+  private def validateMove(move: Move, piece: Piece, currentPlayer: Color): Either[BoardError, Unit] = {
+    if (!move.isValid) Left(InvalidMove(move))
+    else if (piece.color != currentPlayer) Left(WrongPlayer(piece.color))
+    else if (!isValidDirection(move, piece)) Left(InvalidMove(move))
+    else if (move.isJump && !canJump(move, currentPlayer)) Left(InvalidMove(move))
+    else if (!move.isJump && !canMove(move)) Left(InvalidMove(move))
+    else Right(())
   }
 
   private def shouldPromote(pos: Position, piece: Piece): Piece = {
