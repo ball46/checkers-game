@@ -1,5 +1,7 @@
 package checkers.models
 
+case class MoveRequest(from: Position, to: Position)
+
 case class Move(from: Position, to: Position) {
   // ตรวจสอบว่าการเดินถูกต้องตามกติกาพื้นฐาน
   def isValid: Boolean = {

@@ -2,10 +2,14 @@
 <project version="4">
   <component name="ScalaCompilerConfiguration">
     <profile name="sbt 1" modules="scala-checkers">
+      <option name="higherKinds" value="true" />
       <option name="deprecationWarnings" value="true" />
       <option name="featureWarnings" value="true" />
       <parameters>
-        <parameter value="-Xfatal-warnings" />
+        <parameter value="-explain" />
+        <parameter value="-explain-types" />
+        <parameter value="-Xmax-inlines" />
+        <parameter value="64" />
       </parameters>
     </profile>
   </component>
