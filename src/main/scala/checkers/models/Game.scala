@@ -17,37 +17,60 @@ case class Game(
     status match {
       case GameOver(_) => Left(GameAlreadyOver)
       case InProgress =>
-        board.makeMove(move, currentPlayer).map { newBoard =>
-          val nextPlayer = if (currentPlayer == White) Black else White
-          val newStatus = determineGameStatus(newBoard, nextPlayer)
-          Game(newBoard, nextPlayer, newStatus)
-        }.left.map {
-          case InvalidPosition(pos) => GameMovementError(InvalidPosition(pos))
-          case InvalidMove(m) => GameMovementError(InvalidMove(m))
-          case WrongPlayer(color) => GameMovementError(WrongPlayer(color))
+        val allMoves = getValidMovesForPlayer(currentPlayer)
+        val jumpMoves = allMoves.filter { case (_, moves) => moves.exists(_.isJump) }
+
+        val validMoves = if (jumpMoves.nonEmpty) jumpMoves else allMoves
+
+        if (validMoves.values.flatten.exists(_ == move)) {
+          board.makeMove(move, currentPlayer).map { newBoard =>
+            val nextPlayer = if (currentPlayer == White) Black else White
+            val newStatus = determineGameStatus(newBoard, nextPlayer)
+            val continuationMoves = getPossibleMoves(move.to, currentPlayer, isContinuation = true)
+            if (continuationMoves.nonEmpty) {
+              Game(newBoard, currentPlayer, InProgress)
+            } else {
+              Game(newBoard, nextPlayer, newStatus)
+            }
+          }.left.map {
+            case InvalidPosition(pos) => GameMovementError(InvalidPosition(pos))
+            case InvalidMove(m) => GameMovementError(InvalidMove(m))
+            case WrongPlayer(color) => GameMovementError(WrongPlayer(color))
+          }
+        } else {
+          Left(GameMovementError(InvalidMove(move)))
         }
     }
   }
-  
-  private def determineGameStatus(board: Board, nextPlayer: Color): GameStatus = {
-    val hasValidMoves = board.pieces.indices.exists { y =>
-      board.pieces(y).indices.exists { x =>
-        val pos = Position(x, y)
-        board(pos).toOption.flatten.exists(_.color == nextPlayer) && getPossibleMoves(pos).nonEmpty
+
+  def getValidMovesForPlayer(player: Color): Map[Position, List[Move]] = {
+    board.pieces.indices.flatMap { y =>
+      board.pieces(y).indices.collect {
+        case x if board(Position(x, y)).toOption.flatten.exists(_.color == player) =>
+          Position(x, y) -> getValidMoves(Position(x, y))
       }
-    }
-    if (!hasValidMoves) GameOver(Some(currentPlayer)) else InProgress
+    }.toMap.filter(_._2.nonEmpty)
   }
 
-  private def getPossibleMoves(pos: Position): List[Move] = {
-    val normalMoves = for {
-      dx <- List(-1, 1)
-      dy <- List(-1, 1)
-      to = Position(pos.x + dx, pos.y + dy)
-      move = Move(pos, to)
-      if board.isValidMove(move, currentPlayer)
-    } yield move
+  private def hasValidMoves(board: Board, player: Color): Boolean = {
+    board.pieces.indices.exists { y =>
+      board.pieces(y).indices.exists { x =>
+        val pos = Position(x, y)
+        board(pos).toOption.flatten.exists(_.color == player) && getPossibleMoves(pos, player).nonEmpty
+      }
+    }
+  }
 
+  private def determineGameStatus(board: Board, nextPlayer: Color): GameStatus = {
+    val currentPlayerHasMoves = hasValidMoves(board, currentPlayer)
+    val nextPlayerHasMoves = hasValidMoves(board, nextPlayer)
+
+    if (!currentPlayerHasMoves && !nextPlayerHasMoves) GameOver(None)
+    else if (!nextPlayerHasMoves) GameOver(Some(currentPlayer))
+    else InProgress
+  }
+
+  private def getPossibleMoves(pos: Position, currentPlayer: Color = currentPlayer, isContinuation: Boolean = false): List[Move] = {
     val jumpMoves = for {
       dx <- List(-2, 2)
       dy <- List(-2, 2)
@@ -56,7 +79,19 @@ case class Game(
       if board.isValidMove(move, currentPlayer)
     } yield move
 
-    normalMoves ++ jumpMoves
+    if (jumpMoves.nonEmpty) jumpMoves
+    else if (!isContinuation) {
+      val normalMoves = for {
+        dx <- List(-1, 1)
+        dy <- List(-1, 1)
+        to = Position(pos.x + dx, pos.y + dy)
+        move = Move(pos, to)
+        if board.isValidMove(move, currentPlayer)
+      } yield move
+      normalMoves
+    } else {
+      List.empty
+    }
   }
   
   def getValidMoves(position: Position): List[Move] = {

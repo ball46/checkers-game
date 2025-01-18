@@ -33,8 +33,9 @@ class GameServiceImpl extends GameService {
   }
 
   def findGame(id: String): IO[Option[GameResponse]] = 
-    IO.pure(games.get(id).map(game => 
-      GameResponse(id, game.board, game.currentPlayer, game.status)))
+    IO.pure(games.get(id).map(game =>
+      val validMoves = getValidMoves(game)
+      GameResponse(id, game.board, game.currentPlayer, game.status, validMoves)))
 
   def makeMove(gameId: String, from: Position, to: Position): IO[Either[GameError, GameResponse]] = {
   IO.pure(games.get(gameId)).flatMap {
@@ -52,11 +53,10 @@ class GameServiceImpl extends GameService {
 }
 
   def getValidMoves(game: Game): Map[Position, List[Move]] = {
-    game.board.pieces.indices.flatMap { y =>
-      game.board.pieces(y).indices.collect {
-        case x if game.board(Position(x, y)).toOption.flatten.exists(_.color == game.currentPlayer) =>
-          Position(x, y) -> game.getValidMoves(Position(x, y))
-      }
-    }.toMap.filter(_._2.nonEmpty)
+    val allMoves = game.getValidMovesForPlayer(game.currentPlayer)
+
+    val jumpMoves = allMoves.filter { case (_, moves) => moves.exists(_.isJump) }
+
+    if (jumpMoves.nonEmpty) jumpMoves else allMoves
   }
 }
