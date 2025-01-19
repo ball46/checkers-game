@@ -24,11 +24,6 @@ case class GameResponse(
 
 case class GameListResponse(name: String, id: String, status: GameStatus)
 
-case class GameState(
-  games: Map[String, Game],
-  nameToId: Map[String, String]
-)
-
 class GameServiceImpl extends GameService {
   private val games = scala.collection.concurrent.TrieMap[String, Game]()
   private val boardGameName = scala.collection.concurrent.TrieMap[String, String]()
