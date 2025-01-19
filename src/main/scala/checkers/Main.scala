@@ -17,10 +17,10 @@ object Main extends IOApp.Simple {
     val corsConfig = CORS.policy.withAllowCredentials(false)
       .withAllowOriginHost(_ => true)
       .withAllowMethodsIn(Set(
-        org.http4s.Method.GET, 
-        org.http4s.Method.POST, 
-        org.http4s.Method.PUT, 
-        org.http4s.Method.DELETE, 
+        org.http4s.Method.GET,
+        org.http4s.Method.POST,
+        org.http4s.Method.PUT,
+        org.http4s.Method.DELETE,
         org.http4s.Method.OPTIONS))
       .withAllowHeadersIn(Set(org.typelevel.ci.CIString("Content-Type")))
       .withMaxAge(1.day)
