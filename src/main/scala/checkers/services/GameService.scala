@@ -73,19 +73,18 @@ class GameServiceImpl extends GameService {
   }
 
   def makeMove(gameId: String, from: Position, to: Position): IO[Either[GameError, GameResponse]] = {
-  IO.pure(games.get(gameId)).flatMap {
-    case None => 
-      IO.pure(Left(GameMovementError(InvalidMove(Move(from, to)))))
-    case Some(game) => 
-      IO.pure(
-        game.makeMove(Move(from, to)).map { newGame =>
-          games.update(gameId, newGame)
-          val validMoves = getValidMoves(newGame)
-          GameResponse(gameId, game.name, newGame.board, newGame.currentPlayer, newGame.status, validMoves)
+    IO.pure(games.get(gameId)).flatMap {
+      case None => IO.pure(Left(GameNotFound(gameId)))
+      case Some(game) =>
+        game.makeMove(Move(from, to)) match {
+          case Left(error) => IO.pure(Left(error))
+          case Right(newGame) =>
+            games.update(gameId, newGame)
+            val validMoves = getValidMoves(newGame)
+            IO.pure(Right(GameResponse(gameId, game.name, newGame.board, newGame.currentPlayer, newGame.status, validMoves)))
         }
-      )
+    }
   }
-}
 
   def getValidMoves(game: Game): Map[Position, List[Move]] = {
     val allMoves = game.getValidMovesForPlayer(game.currentPlayer)
