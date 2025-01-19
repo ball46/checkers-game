@@ -11,7 +11,6 @@ trait GameService {
   def findGameByName(name: String): IO[Option[GameResponse]]
   def deleteGame(gameId: String): IO[Either[GameError, Unit]]
   def makeMove(gameId: String, from: Position, to: Position): IO[Either[GameError, GameResponse]]
-  def getValidMoves(game: Game): Map[Position, List[Move]]
 }
 
 case class GameResponse(
@@ -25,6 +24,11 @@ case class GameResponse(
 
 case class GameListResponse(name: String, id: String, status: GameStatus)
 
+case class GameState(
+  games: Map[String, Game],
+  nameToId: Map[String, String]
+)
+
 class GameServiceImpl extends GameService {
   private val games = scala.collection.concurrent.TrieMap[String, Game]()
   private val boardGameName = scala.collection.concurrent.TrieMap[String, String]()
@@ -37,16 +41,22 @@ class GameServiceImpl extends GameService {
    * @return An IO containing either a GameError or a GameResponse.
    */
   def createGame(name: String, singlePlayer: Boolean): IO[Either[GameError, GameResponse]] = {
-    IO.pure(boardGameName.contains(name)).flatMap {
-      case true => IO.pure(Left(DuplicateGameName))
-      case false =>
-        val gameId = java.util.UUID.randomUUID().toString
-        val game = if (singlePlayer) Game.initialSinglePlayer(name) else Game.initialTuneBasePlayer(name)
-        val validMoves = getValidMoves(game)
-        games.put(gameId, game)
-        boardGameName.put(name, gameId)
-        IO.pure(Right(GameResponse(gameId, game.name, game.board, game.currentPlayer, game.status, validMoves)))
-    }
+    for {
+      exists <- IO.pure(boardGameName.contains(name))
+      result <- if (exists) {
+        IO.pure(Left(DuplicateGameName))
+      } else {
+        for {
+          gameId <- IO.pure(java.util.UUID.randomUUID().toString)
+          game = if (singlePlayer) Game.initialSinglePlayer(name) else Game.initialTuneBasePlayer(name)
+          validMoves = getValidMoves(game).filter(_._2.nonEmpty)
+          _ <- IO.delay {
+            games.put(gameId, game)
+            boardGameName.put(name, gameId)
+          }
+        } yield Right(GameResponse(gameId, game.name, game.board, game.currentPlayer, game.status, validMoves))
+      }
+    } yield result
   }
 
   /**
@@ -54,10 +64,10 @@ class GameServiceImpl extends GameService {
    * 
    * @return An IO containing a list of GameListResponse.
    */
-  def getListGame: IO[List[GameListResponse]] = {
-    IO.pure(boardGameName.toList.flatMap { case (name, id) =>
+  def getListGame: IO[List[GameListResponse]] = IO.delay {
+    boardGameName.toList.flatMap { case (name, id) =>
       games.get(id).map(game => GameListResponse(name, id, game.status))
-    })
+    }
   }
 
   /**
@@ -66,10 +76,12 @@ class GameServiceImpl extends GameService {
    * @param id The ID of the game.
    * @return An IO containing an Option of GameResponse.
    */
-  def findGameById(id: String): IO[Option[GameResponse]] =
-    IO.pure(games.get(id).map(game =>
-      val validMoves = getValidMoves(game)
-      GameResponse(id, game.name, game.board, game.currentPlayer, game.status, validMoves)))
+  def findGameById(id: String): IO[Option[GameResponse]] = IO.delay {
+    games.get(id).map { game =>
+      val validMoves = getValidMoves(game).filter(_._2.nonEmpty)
+      GameResponse(id, game.name, game.board, game.currentPlayer, game.status, validMoves)
+    }
+  }
 
   /**
    * Finds a game by its name.
@@ -77,10 +89,13 @@ class GameServiceImpl extends GameService {
    * @param name The name of the game.
    * @return An IO containing an Option of GameResponse.
    */
-  def findGameByName(name: String): IO[Option[GameResponse]] =
-    IO.pure(boardGameName.get(name).flatMap(games.get).map(game =>
-      val validMoves = getValidMoves(game)
-      GameResponse(boardGameName(name), game.name, game.board, game.currentPlayer, game.status, validMoves)))
+  def findGameByName(name: String): IO[Option[GameResponse]] = IO.delay {
+    for {
+      gameId <- boardGameName.get(name)
+      game <- games.get(gameId)
+      validMoves = getValidMoves(game).filter(_._2.nonEmpty)
+    } yield GameResponse(gameId, game.name, game.board, game.currentPlayer, game.status, validMoves)
+  }
 
   /**
    * Deletes a game by its ID.
@@ -88,17 +103,13 @@ class GameServiceImpl extends GameService {
    * @param gameId The ID of the game to delete.
    * @return An IO containing either a GameError or Unit.
    */
-  def deleteGame(gameId: String): IO[Either[GameError, Unit]] = {
-    IO.pure(games.get(gameId)).flatMap {
-      case None => IO.pure(Left(GameNotFound(gameId)))
+  def deleteGame(gameId: String): IO[Either[GameError, Unit]] = IO.delay {
+    games.get(gameId) match {
+      case None => Left(GameNotFound(gameId))
       case Some(game) =>
-        game.status match {
-          case InProgress => IO.pure(Left(GameIsProgress))
-          case GameOver(_) =>
-            games.remove(gameId)
-            boardGameName.filterInPlace((_, id) => id != gameId)
-            IO.pure(Right(()))
-        }
+        games.remove(gameId)
+        boardGameName.remove(game.name)
+        Right(())
     }
   }
 
@@ -111,16 +122,13 @@ class GameServiceImpl extends GameService {
    * @return An IO containing either a GameError or a GameResponse.
    */
   def makeMove(gameId: String, from: Position, to: Position): IO[Either[GameError, GameResponse]] = {
-    IO.pure(games.get(gameId)).flatMap {
-      case None => IO.pure(Left(GameNotFound(gameId)))
-      case Some(game) =>
-        game.makeMove(Move(from, to)) match {
-          case Left(error) => IO.pure(Left(error))
-          case Right(newGame) =>
-            games.update(gameId, newGame)
-            val validMoves = getValidMoves(newGame)
-            IO.pure(Right(GameResponse(gameId, game.name, newGame.board, newGame.currentPlayer, newGame.status, validMoves)))
-        }
+    IO.delay {
+      for {
+        game <- games.get(gameId).toRight(GameNotFound(gameId))
+        newGame <- game.makeMove(Move(from, to))
+        _ = games.update(gameId, newGame)
+        validMoves = getValidMoves(newGame).filter(_._2.nonEmpty)
+      } yield GameResponse(gameId, game.name, newGame.board, newGame.currentPlayer, newGame.status, validMoves)
     }
   }
 
@@ -130,11 +138,9 @@ class GameServiceImpl extends GameService {
    * @param game The game for which to get valid moves.
    * @return A map of positions to lists of valid moves.
    */
-  def getValidMoves(game: Game): Map[Position, List[Move]] = {
+  private def getValidMoves(game: Game): Map[Position, List[Move]] = {
     val allMoves = game.getValidMovesForPlayer(game.currentPlayer)
-
-    val jumpMoves = allMoves.filter { case (_, moves) => moves.exists(_.isJump) }
-
+    val jumpMoves = allMoves.filter(_._2.exists(_.isJump))
     if (jumpMoves.nonEmpty) jumpMoves else allMoves
   }
 }
