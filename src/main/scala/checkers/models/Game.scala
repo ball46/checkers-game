@@ -6,9 +6,13 @@ case class GameOver(winner: Option[Color]) extends GameStatus
 
 sealed trait GameError
 case class GameMovementError(boardError: BoardError) extends GameError
+case class GameNotFound(id: String) extends GameError
+case object GameIsProgress extends GameError
 case object GameAlreadyOver extends GameError
+case object DuplicateGameName extends GameError
 
 case class Game(
+  name: String,
   board: Board,
   currentPlayer: Color,
   status: GameStatus = InProgress
@@ -28,9 +32,9 @@ case class Game(
             val newStatus = determineGameStatus(newBoard, nextPlayer)
             val continuationMoves = getPossibleMoves(move.to, currentPlayer, isContinuation = true)
             if (continuationMoves.nonEmpty) {
-              Game(newBoard, currentPlayer, InProgress)
+              Game(name, newBoard, currentPlayer, InProgress)
             } else {
-              Game(newBoard, nextPlayer, newStatus)
+              Game(name, newBoard, nextPlayer, newStatus)
             }
           }.left.map {
             case InvalidPosition(pos) => GameMovementError(InvalidPosition(pos))
@@ -107,6 +111,6 @@ case class Game(
 }
 
 object Game {
-  def initialTuneBasePlayer: Game = Game(Board.initial, White)
-  def initialSinglePlayer: Game = Game(Board.initial, White)
+  def initialTuneBasePlayer(name: String): Game = Game(name,Board.initial, White)
+  def initialSinglePlayer(name: String): Game = Game(name, Board.initial, White)
 }
