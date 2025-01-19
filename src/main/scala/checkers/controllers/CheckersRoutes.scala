@@ -1,7 +1,6 @@
 package checkers.controllers
 
 import cats.effect.IO
-import checkers.controllers.*
 import checkers.services.GameService
 import org.http4s.HttpRoutes
 
