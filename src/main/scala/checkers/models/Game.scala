@@ -1,9 +1,15 @@
 package checkers.models
 
+/**
+ * Represents the status of a game.
+ */
 sealed trait GameStatus
 case object InProgress extends GameStatus
 case class GameOver(winner: Option[Color]) extends GameStatus
 
+/**
+ * Represents different types of game errors.
+ */
 sealed trait GameError
 case class GameMovementError(boardError: BoardError) extends GameError
 case class GameNotFound(id: String) extends GameError
@@ -11,12 +17,26 @@ case object GameIsProgress extends GameError
 case object GameAlreadyOver extends GameError
 case object DuplicateGameName extends GameError
 
+/**
+ * Represents a game with its name, board, current player, and status.
+ *
+ * @param name          The name of the game.
+ * @param board         The board of the game.
+ * @param currentPlayer The current player.
+ * @param status        The status of the game.
+ */
 case class Game(
   name: String,
   board: Board,
   currentPlayer: Color,
   status: GameStatus = InProgress
 ) {
+  /**
+   * Makes a move in the game.
+   *
+   * @param move The move to be made.
+   * @return Either a GameError or the updated Game.
+   */
   def makeMove(move: Move): Either[GameError, Game] = {
     status match {
       case GameOver(_) => Left(GameAlreadyOver)
@@ -47,6 +67,12 @@ case class Game(
     }
   }
 
+  /**
+   * Retrieves the valid moves for the current player.
+   *
+   * @param player The current player.
+   * @return A map of positions to lists of valid moves.
+   */
   def getValidMovesForPlayer(player: Color): Map[Position, List[Move]] = {
     board.pieces.indices.flatMap { y =>
       board.pieces(y).indices.collect {
@@ -56,6 +82,13 @@ case class Game(
     }.toMap.filter(_._2.nonEmpty)
   }
 
+  /**
+   * Checks if the given player has valid moves.
+   *
+   * @param board  The board of the game.
+   * @param player The player to check.
+   * @return True if the player has valid moves, false otherwise.
+   */
   private def hasValidMoves(board: Board, player: Color): Boolean = {
     board.pieces.indices.exists { y =>
       board.pieces(y).indices.exists { x =>
@@ -65,6 +98,13 @@ case class Game(
     }
   }
 
+  /**
+   * Determines the status of the game based on the board and the next player.
+   *
+   * @param board      The board of the game.
+   * @param nextPlayer The next player.
+   * @return The status of the game.
+   */
   private def determineGameStatus(board: Board, nextPlayer: Color): GameStatus = {
     val currentPlayerHasMoves = hasValidMoves(board, currentPlayer)
     val nextPlayerHasMoves = hasValidMoves(board, nextPlayer)
@@ -74,6 +114,14 @@ case class Game(
     else InProgress
   }
 
+  /**
+   * Retrieves the possible moves for a piece at the given position.
+   *
+   * @param pos            The position of the piece.
+   * @param currentPlayer  The current player.
+   * @param isContinuation Boolean indicating if the move is a continuation.
+   * @return A list of possible moves.
+   */
   private def getPossibleMoves(pos: Position, currentPlayer: Color = currentPlayer, isContinuation: Boolean = false): List[Move] = {
     val jumpMoves = for {
       dx <- List(-2, 2)
@@ -97,7 +145,13 @@ case class Game(
       List.empty
     }
   }
-  
+
+  /**
+   * Retrieves the valid moves for a piece at the given position.
+   *
+   * @param position The position of the piece.
+   * @return A list of valid moves.
+   */
   def getValidMoves(position: Position): List[Move] = {
     status match {
       case GameOver(_) => List.empty
@@ -111,6 +165,19 @@ case class Game(
 }
 
 object Game {
+  /**
+   * Creates an initial game with two players.
+   *
+   * @param name The name of the game.
+   * @return The initial game.
+   */
   def initialTuneBasePlayer(name: String): Game = Game(name,Board.initial, White)
+
+  /**
+   * Creates an initial single-player game.
+   *
+   * @param name The name of the game.
+   * @return The initial game.
+   */
   def initialSinglePlayer(name: String): Game = Game(name, Board.initial, White)
 }

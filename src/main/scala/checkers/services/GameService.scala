@@ -29,6 +29,13 @@ class GameServiceImpl extends GameService {
   private val games = scala.collection.concurrent.TrieMap[String, Game]()
   private val boardGameName = scala.collection.concurrent.TrieMap[String, String]()
 
+  /**
+   * Creates a new game with the given name and player mode.
+   * 
+   * @param name         The name of the game.
+   * @param singlePlayer Boolean indicating if the game is single player.
+   * @return An IO containing either a GameError or a GameResponse.
+   */
   def createGame(name: String, singlePlayer: Boolean): IO[Either[GameError, GameResponse]] = {
     IO.pure(boardGameName.contains(name)).flatMap {
       case true => IO.pure(Left(DuplicateGameName))
@@ -42,22 +49,45 @@ class GameServiceImpl extends GameService {
     }
   }
 
+  /**
+   * Retrieves a list of all games with their names, IDs, and statuses.
+   * 
+   * @return An IO containing a list of GameListResponse.
+   */
   def getListGame: IO[List[GameListResponse]] = {
     IO.pure(boardGameName.toList.flatMap { case (name, id) =>
       games.get(id).map(game => GameListResponse(name, id, game.status))
     })
   }
 
+  /**
+   * Finds a game by its ID.
+   *
+   * @param id The ID of the game.
+   * @return An IO containing an Option of GameResponse.
+   */
   def findGameById(id: String): IO[Option[GameResponse]] =
     IO.pure(games.get(id).map(game =>
       val validMoves = getValidMoves(game)
       GameResponse(id, game.name, game.board, game.currentPlayer, game.status, validMoves)))
 
+  /**
+   * Finds a game by its name.
+   *
+   * @param name The name of the game.
+   * @return An IO containing an Option of GameResponse.
+   */
   def findGameByName(name: String): IO[Option[GameResponse]] =
     IO.pure(boardGameName.get(name).flatMap(games.get).map(game =>
       val validMoves = getValidMoves(game)
       GameResponse(boardGameName(name), game.name, game.board, game.currentPlayer, game.status, validMoves)))
 
+  /**
+   * Deletes a game by its ID.
+   *
+   * @param gameId The ID of the game to delete.
+   * @return An IO containing either a GameError or Unit.
+   */
   def deleteGame(gameId: String): IO[Either[GameError, Unit]] = {
     IO.pure(games.get(gameId)).flatMap {
       case None => IO.pure(Left(GameNotFound(gameId)))
@@ -72,6 +102,14 @@ class GameServiceImpl extends GameService {
     }
   }
 
+  /**
+   * Makes a move in the specified game.
+   *
+   * @param gameId The ID of the game.
+   * @param from   The starting position of the move.
+   * @param to     The ending position of the move.
+   * @return An IO containing either a GameError or a GameResponse.
+   */
   def makeMove(gameId: String, from: Position, to: Position): IO[Either[GameError, GameResponse]] = {
     IO.pure(games.get(gameId)).flatMap {
       case None => IO.pure(Left(GameNotFound(gameId)))
@@ -86,6 +124,12 @@ class GameServiceImpl extends GameService {
     }
   }
 
+  /**
+   * Retrieves the valid moves for the current player in the given game.
+   *
+   * @param game The game for which to get valid moves.
+   * @return A map of positions to lists of valid moves.
+   */
   def getValidMoves(game: Game): Map[Position, List[Move]] = {
     val allMoves = game.getValidMovesForPlayer(game.currentPlayer)
 
