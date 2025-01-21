@@ -1,5 +1,7 @@
 package checkers.models
 
+import scala.annotation.tailrec
+
 /**
  * Represents the status of a game.
  */
@@ -114,6 +116,68 @@ case class Game(
     else InProgress
   }
 
+  private def getDiagonalMoves(pos: Position, currentPlayer: Color): List[Move] = {
+  // ทิศทางทั้ง 4 ทิศทางของการเดินแนวทแยง
+  val directions = List((-1, -1), (-1, 1), (1, -1), (1, 1))
+  
+  // flatMap: แปลงแต่ละทิศทางเป็น List[Move] แล้วรวมเป็น List เดียว
+  directions.flatMap { case (dx, dy) =>
+    // getDiagonalMovesInDirection: หา moves ในทิศทางเดียว
+    getDiagonalMovesInDirection(pos, currentPlayer, dx, dy)
+  }
+}
+
+  // Helper function สำหรับหา moves ในทิศทางที่กำหนด
+  @tailrec
+  private def getDiagonalMovesInDirection(
+    pos: Position,
+    currentPlayer: Color,
+    dx: Int,
+    dy: Int,
+    step: Int = 1,
+    acc: List[Move] = List.empty
+  ): List[Move] = {
+    // คำนวณตำแหน่งถัดไปตามทิศทาง
+    val newX = pos.x + (dx * step)
+    val newY = pos.y + (dy * step)
+    val to = Position(newX, newY)
+    val move = Move(pos, to)
+
+    // Base cases: เงื่อนไขการหยุด recursion
+    if (!to.isValid) {
+      acc  // ออกนอกกระดาน
+    } else if (!board.isValidMove(move, currentPlayer)) {
+      acc  // เจอหมากขวาง หรือ invalid move
+    } else {
+      // Recursive case: เพิ่ม move ปัจจุบัน และหา moves ถัดไป
+      getDiagonalMovesInDirection(
+        pos,
+        currentPlayer,
+        dx,
+        dy,
+        step + 1,
+        move :: acc
+      )
+    }
+  }
+
+  private def getJumpMoves(pos: Position, currentPlayer: Color): List[Move] = {
+    val directions = List((-2, -2), (-2, 2), (2, -2), (2, 2))
+    Moves(pos, currentPlayer, directions)
+  }
+
+  private def getNormalMoves(pos: Position, currentPlayer: Color): List[Move] = {
+    val directions = List((-1, -1), (-1, 1), (1, -1), (1, 1))
+    Moves(pos, currentPlayer, directions)
+  }
+
+  private def Moves(pos: Position, currentPlayer: Color, possibleList: List[(Int, Int)]): List[Move] = {
+    val directions = possibleList
+    directions.map { case (dx, dy) =>
+      Move(pos, Position(pos.x + dx, pos.y + dy))
+    }.filter(board.isValidMove(_, currentPlayer))
+  }
+
   /**
    * Retrieves the possible moves for a piece at the given position.
    *
@@ -123,26 +187,28 @@ case class Game(
    * @return A list of possible moves.
    */
   private def getPossibleMoves(pos: Position, currentPlayer: Color = currentPlayer, isContinuation: Boolean = false): List[Move] = {
-    val jumpMoves = for {
-      dx <- List(-2, 2)
-      dy <- List(-2, 2)
-      to = Position(pos.x + dx, pos.y + dy)
-      move = Move(pos, to)
-      if board.isValidMove(move, currentPlayer)
-    } yield move
-
-    if (jumpMoves.nonEmpty) jumpMoves
-    else if (!isContinuation) {
-      val normalMoves = for {
-        dx <- List(-1, 1)
-        dy <- List(-1, 1)
-        to = Position(pos.x + dx, pos.y + dy)
-        move = Move(pos, to)
-        if board.isValidMove(move, currentPlayer)
-      } yield move
-      normalMoves
-    } else {
-      List.empty
+    val piece = board(pos).toOption.flatten
+    
+    piece match {
+      case Some(p) if p.isKing =>
+        // King can move in any diagonal direction
+        if (isContinuation) {
+          // During continuation, only allow jumps
+          getJumpMoves(pos, currentPlayer)
+        } else {
+          val jumps = getJumpMoves(pos, currentPlayer)
+          if (jumps.nonEmpty) jumps
+          else getDiagonalMoves(pos, currentPlayer)
+        }
+        
+      case Some(_) =>
+        // Normal piece movement
+        val jumpMoves = getJumpMoves(pos, currentPlayer)
+        if (jumpMoves.nonEmpty) jumpMoves
+        else if (!isContinuation) getNormalMoves(pos, currentPlayer)
+        else List.empty
+        
+      case None => List.empty
     }
   }
 
