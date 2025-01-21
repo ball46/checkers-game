@@ -43,13 +43,14 @@ case class Game(
       case InProgress =>
         val allMoves = getValidMovesForPlayer(currentPlayer)
         val jumpMoves = allMoves.filter { case (_, moves) => moves.exists(_.isJump) }
+        val haveJumpMoves = jumpMoves.nonEmpty
 
-        val validMoves = if (jumpMoves.nonEmpty) jumpMoves else allMoves
+        val validMoves = if (haveJumpMoves) jumpMoves else allMoves
 
         if (validMoves.values.flatten.exists(_ == move)) {
           board.makeMove(move, currentPlayer).map { newBoard =>
             val continuationMoves = getPossibleMoves(move.to, currentPlayer, true, newBoard)
-            if (continuationMoves.exists(_.isJump)) {
+            if (haveJumpMoves && continuationMoves.exists(_.isJump)) {
               Game(name, newBoard, currentPlayer, status)
             } else {
               val nextPlayer = if (currentPlayer == White) Black else White
