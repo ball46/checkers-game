@@ -24,6 +24,11 @@ case class Move(from: Position, to: Position) {
     from.isValid && to.isValid && isDiagonal
   }
 
+  /**
+   * Checks if the move is diagonal.
+   *
+   * @return True if the move is diagonal, false otherwise.
+   */
   def isDiagonal: Boolean = {
     val dx = (from.x - to.x).abs
     val dy = (from.y - to.y).abs

@@ -114,16 +114,40 @@ case class Game(
     else InProgress
   }
 
+  /**
+   * Retrieves the jump moves for a piece at the given position.
+   *
+   * @param pos           The position of the piece.
+   * @param currentPlayer The current player.
+   * @param board         The board of the game.
+   * @return A list of jump moves.
+   */
   private def getJumpMoves(pos: Position, currentPlayer: Color, board: Board = board): List[Move] = {
     val directions = List((-2, -2), (-2, 2), (2, -2), (2, 2))
     Moves(pos, currentPlayer, directions, board)
   }
 
+  /**
+   * Retrieves the normal moves for a piece at the given position.
+   *
+   * @param pos           The position of the piece.
+   * @param currentPlayer The current player.
+   * @return A list of normal moves.
+   */
   private def getNormalMoves(pos: Position, currentPlayer: Color): List[Move] = {
     val directions = List((-1, -1), (-1, 1), (1, -1), (1, 1))
     Moves(pos, currentPlayer, directions)
   }
 
+  /**
+   * Retrieves the moves for a piece at the given position in the specified directions.
+   *
+   * @param pos           The position of the piece.
+   * @param currentPlayer The current player.
+   * @param possibleList  The list of possible directions.
+   * @param board         The board of the game.
+   * @return A list of moves.
+   */
   private def Moves(pos: Position, currentPlayer: Color, possibleList: List[(Int, Int)], board: Board = board): List[Move] = {
     val directions = possibleList
     directions.map { case (dx, dy) =>
@@ -138,6 +162,7 @@ case class Game(
    * @param pos            The position of the piece.
    * @param currentPlayer  The current player.
    * @param isContinuation Boolean indicating if the move is a continuation.
+   * @param board          The board of the game.
    * @return A list of possible moves.
    */
   private def getPossibleMoves(pos: Position, currentPlayer: Color = currentPlayer, isContinuation: Boolean = false, board: Board = board): List[Move] = {
