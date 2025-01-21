@@ -21,9 +21,13 @@ case class Move(from: Position, to: Position) {
    * @return True if the move is valid, false otherwise.
    */
   def isValid: Boolean = {
-    from.isValid && to.isValid &&
-      (from.x - to.x).abs <= 2 &&
-      (from.y - to.y).abs <= 2
+    from.isValid && to.isValid && isDiagonal
+  }
+
+  def isDiagonal: Boolean = {
+    val dx = (from.x - to.x).abs
+    val dy = (from.y - to.y).abs
+    dx == dy && dx <= 2  // Allow only 1 or 2 square diagonal moves
   }
 
   /**

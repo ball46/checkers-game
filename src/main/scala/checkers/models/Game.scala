@@ -48,12 +48,12 @@ case class Game(
 
         if (validMoves.values.flatten.exists(_ == move)) {
           board.makeMove(move, currentPlayer).map { newBoard =>
-            val nextPlayer = if (currentPlayer == White) Black else White
-            val newStatus = determineGameStatus(newBoard, nextPlayer)
-            val continuationMoves = getPossibleMoves(move.to, currentPlayer, isContinuation = true)
-            if (continuationMoves.nonEmpty) {
-              Game(name, newBoard, currentPlayer, InProgress)
+            val continuationMoves = getPossibleMoves(move.to, currentPlayer, true, newBoard)
+            if (continuationMoves.exists(_.isJump)) {
+              Game(name, newBoard, currentPlayer, status)
             } else {
+              val nextPlayer = if (currentPlayer == White) Black else White
+              val newStatus = determineGameStatus(newBoard, nextPlayer)
               Game(name, newBoard, nextPlayer, newStatus)
             }
           }.left.map {
@@ -114,6 +114,24 @@ case class Game(
     else InProgress
   }
 
+  private def getJumpMoves(pos: Position, currentPlayer: Color, board: Board = board): List[Move] = {
+    val directions = List((-2, -2), (-2, 2), (2, -2), (2, 2))
+    Moves(pos, currentPlayer, directions, board)
+  }
+
+  private def getNormalMoves(pos: Position, currentPlayer: Color): List[Move] = {
+    val directions = List((-1, -1), (-1, 1), (1, -1), (1, 1))
+    Moves(pos, currentPlayer, directions)
+  }
+
+  private def Moves(pos: Position, currentPlayer: Color, possibleList: List[(Int, Int)], board: Board = board): List[Move] = {
+    val directions = possibleList
+    directions.map { case (dx, dy) =>
+      val move = Move(pos, Position(pos.x + dx, pos.y + dy))
+      move
+    }.filter(board.isValidMove(_, currentPlayer))
+  }
+
   /**
    * Retrieves the possible moves for a piece at the given position.
    *
@@ -122,27 +140,13 @@ case class Game(
    * @param isContinuation Boolean indicating if the move is a continuation.
    * @return A list of possible moves.
    */
-  private def getPossibleMoves(pos: Position, currentPlayer: Color = currentPlayer, isContinuation: Boolean = false): List[Move] = {
-    val jumpMoves = for {
-      dx <- List(-2, 2)
-      dy <- List(-2, 2)
-      to = Position(pos.x + dx, pos.y + dy)
-      move = Move(pos, to)
-      if board.isValidMove(move, currentPlayer)
-    } yield move
-
-    if (jumpMoves.nonEmpty) jumpMoves
-    else if (!isContinuation) {
-      val normalMoves = for {
-        dx <- List(-1, 1)
-        dy <- List(-1, 1)
-        to = Position(pos.x + dx, pos.y + dy)
-        move = Move(pos, to)
-        if board.isValidMove(move, currentPlayer)
-      } yield move
-      normalMoves
+  private def getPossibleMoves(pos: Position, currentPlayer: Color = currentPlayer, isContinuation: Boolean = false, board: Board = board): List[Move] = {
+    if (isContinuation) {
+      getJumpMoves(pos, currentPlayer, board)
     } else {
-      List.empty
+      val jumpMoves = getJumpMoves(pos, currentPlayer, board)
+      if (jumpMoves.nonEmpty) jumpMoves
+      else getNormalMoves(pos, currentPlayer)
     }
   }
 
