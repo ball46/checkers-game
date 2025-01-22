@@ -135,7 +135,7 @@ class GameServiceImpl extends GameService {
    */
   private def getValidMoves(game: Game): Map[Position, List[Move]] = {
     val allMoves = game.getValidMovesForPlayer(game.currentPlayer)
-    val jumpMoves = allMoves.filter(_._2.exists(_.isJump))
+    val jumpMoves = allMoves.filter(_._2.exists(_.isJumpMove))
     if (jumpMoves.nonEmpty) jumpMoves else allMoves
   }
 }

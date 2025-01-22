@@ -1,5 +1,10 @@
 package checkers.models
 
+sealed trait JumpType
+case object NormalJump extends JumpType     // 2-square jump
+case object LongRangeJump extends JumpType  // king's jump
+case object NoJump extends JumpType         // regular move
+
 /**
  * Represents a move request with the starting and ending positions.
  *
@@ -20,27 +25,35 @@ case class Move(from: Position, to: Position) {
    *
    * @return True if the move is valid, false otherwise.
    */
-  def isValid: Boolean = {
-    from.isValid && to.isValid && isDiagonal
-  }
+  def isValid: Boolean = from.isValid && to.isValid && isDiagonal
 
   /**
    * Checks if the move is diagonal.
    *
    * @return True if the move is diagonal, false otherwise.
    */
-  def isDiagonal: Boolean = {
+  private def isDiagonal: Boolean = {
     val dx = (from.x - to.x).abs
     val dy = (from.y - to.y).abs
-    dx == dy && dx <= 2  // Allow only 1 or 2 square diagonal moves
+    dx == dy
   }
 
-  /**
-   * Checks if the move is a jump (i.e., moves two squares).
-   *
-   * @return True if the move is a jump, false otherwise.
-   */
-  def isJump: Boolean = (from.x - to.x).abs == 2
+  def getJumpType: JumpType = {
+    val dx = (from.x - to.x).abs
+    if (dx == 2) NormalJump
+    else if (dx > 2) LongRangeJump
+    else NoJump
+  }
+
+  def isJumpMove: Boolean = getJumpType != NoJump
+
+  private def direction: (Int, Int) = {
+    val dx = to.x - from.x
+    val dy = to.y - from.y
+    val stepX = if (dx > 0) 1 else -1
+    val stepY = if (dy > 0) 1 else -1
+    (stepX, stepY)
+  }
 
   /**
    * Finds the position of the piece to be captured (if it is a jump move).
@@ -48,10 +61,10 @@ case class Move(from: Position, to: Position) {
    * @return An Option containing the position of the captured piece, or None if it is not a jump move.
    */
   def capturedPosition: Option[Position] = {
-    if (!isJump) None
+    if (!isJumpMove) None
     else Some(Position(
-      (from.x + to.x) / 2,
-      (from.y + to.y) / 2
+      from.x + direction._1,
+      from.y + direction._2
     ))
   }
 }

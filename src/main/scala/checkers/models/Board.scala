@@ -26,24 +26,28 @@ case class Board(pieces: Vector[Vector[Option[Piece]]]) {
   private def updated(pos: Position, piece: Option[Piece]): Either[BoardError, Board] =
     if (!pos.isValid) Left(InvalidPosition(pos))
     else Right(Board(pieces.updated(pos.y, pieces(pos.y).updated(pos.x, piece))))
-
-  /**
-   * Checks if the move is valid according to the game rules.
-   * @param move The move to validate.
-   * @param currentPlayer The current player making the move.
-   * @return True if the move is valid, false otherwise.
-   */
-  def isValidMove(move: Move, currentPlayer: Color): Boolean = {
-    if (!move.isValid) false
+  
+  private def isDiagonalPathClear(move: Move): Boolean = {
+    val dx = move.to.x - move.from.x
+    val dy = move.to.y - move.from.y
+    
+    if (dx.abs != dy.abs) false  // ต้องเป็นแนวทแยงเท่านั้น
     else {
-      apply(move.from).fold(
-        _ => false, // กรณีเกิด error
-        _.exists(p => // กรณีสำเร็จ
-          p.color == currentPlayer &&
-            isValidDirection(move, p) &&
-            (if (move.isJump) canJump(move, currentPlayer) else canMove(move))
+      val stepX = dx / dx.abs
+      val stepY = dy / dy.abs
+      val steps = dx.abs - 1
+
+      // ตรวจสอบทุกช่องระหว่างจุดเริ่มต้นและจุดสิ้นสุด
+      (1 to steps).forall { i =>
+        val checkPos = Position(
+          move.from.x + (stepX * i),
+          move.from.y + (stepY * i)
         )
-      )
+        apply(checkPos).fold(
+          _ => false,
+          _.isEmpty  // ต้องเป็นช่องว่างทั้งหมด
+        )
+      }
     }
   }
 
@@ -63,17 +67,31 @@ case class Board(pieces: Vector[Vector[Option[Piece]]]) {
     }
   }
 
-  /**
-   * Checks if a normal move (one square) is valid.
-   * 
-   * @param move The move to check.
-   * @return True if the move is valid, false otherwise.
-   */
-  private def canMove(move: Move): Boolean = {
-    apply(move.to).fold(
-      _ => false,
-      _.isEmpty
-    ) && (move.from.x - move.to.x).abs == 1
+  private def findCapturedPiece(move: Move, currentPlayer: Color): Option[Position] = {
+    def isCapturable(pos: Position): Boolean = 
+      apply(pos).toOption.flatten.exists(_.color != currentPlayer)
+
+    move.getJumpType match {
+      case NormalJump =>
+        // Normal 2-square jump
+        val midX = (move.from.x + move.to.x) / 2
+        val midY = (move.from.y + move.to.y) / 2
+        val midPos = Position(midX, midY)
+        Some(midPos).filter(isCapturable)
+        
+      case LongRangeJump =>
+        // King's jump - find first enemy piece in path
+        val dx = move.to.x - move.from.x
+        val dy = move.to.y - move.from.y
+        val stepX = if (dx > 0) 1 else -1
+        val stepY = if (dy > 0) 1 else -1
+        
+        (1 until dx.abs)
+          .map(i => Position(move.from.x + (stepX * i), move.from.y + (stepY * i)))
+          .find(isCapturable)
+          
+      case NoJump => None
+    }
   }
 
   /**
@@ -84,14 +102,9 @@ case class Board(pieces: Vector[Vector[Option[Piece]]]) {
    * @return True if the move is valid, false otherwise.
    */
   private def canJump(move: Move, currentPlayer: Color): Boolean = {
-    move.capturedPosition.exists { pos =>
-      (for {
-        targetSquare <- apply(move.to)
-        capturedPiece <- apply(pos)
-      } yield {
-        targetSquare.isEmpty && // ปลายทางต้องว่าง
-          capturedPiece.exists(_.color != currentPlayer) // มีหมากฝ่ายตรงข้ามให้กิน
-      }).getOrElse(false)
+    findCapturedPiece(move, currentPlayer).exists { pos =>
+      apply(move.to).toOption.flatten.isEmpty &&
+      apply(pos).toOption.flatten.exists(_.color != currentPlayer)
     }
   }
 
@@ -103,22 +116,26 @@ case class Board(pieces: Vector[Vector[Option[Piece]]]) {
    * @return Either a BoardError or the updated Board.
    */
   def makeMove(move: Move, currentPlayer: Color): Either[BoardError, Board] = {
-    def execute(piece: Piece) = for {
-      _ <- validateMove(move, piece, currentPlayer)
-      emptyBoard <- updated(move.from, None)
-      promotedPiece = shouldPromote(move.to, piece)
-      updatedBoard <- emptyBoard.updated(move.to, Some(promotedPiece))
-      finalBoard <- move.capturedPosition.fold[Either[BoardError, Board]](Right(updatedBoard)) { pos =>
-        updatedBoard.updated(pos, None)
-      }
-    } yield finalBoard
+    def processMove(piece: Piece, board: Board): Either[BoardError, Board] = {
+      for {
+        _ <- validateMove(move, piece, currentPlayer)
+        emptyBoard <- board.updated(move.from, None)
+        promotedPiece = shouldPromote(move.to, piece)
+        updatedBoard <- emptyBoard.updated(move.to, Some(promotedPiece))
+        capturedBoard <- findCapturedPiece(move, currentPlayer).fold[Either[BoardError, Board]](
+          Right(updatedBoard)
+        )(pos => updatedBoard.updated(pos, None))
+      } yield capturedBoard
+    }
 
     for {
-      currentPiece <- apply(move.from)
-      piece <- currentPiece.toRight(InvalidMove(move))
-      result <- execute(piece)
+      piece <- getPieceAt(move.from)
+      result <- processMove(piece, this)
     } yield result
   }
+
+  private def getPieceAt(pos: Position): Either[BoardError, Piece] = 
+    apply(pos).flatMap(_.toRight(InvalidMove(Move(pos, pos))))
 
   /**
    * Validates the move according to the game rules.
@@ -128,14 +145,12 @@ case class Board(pieces: Vector[Vector[Option[Piece]]]) {
    * @param currentPlayer The current player making the move.
    * @return Either a BoardError or Unit if the move is valid.
    */
-  private def validateMove(move: Move, piece: Piece, currentPlayer: Color): Either[BoardError, Unit] = {
-    if (!move.isValid) Left(InvalidMove(move))
-    else if (piece.color != currentPlayer) Left(WrongPlayer(piece.color))
-    else if (!isValidDirection(move, piece)) Left(InvalidMove(move))
-    else if (move.isJump && !canJump(move, currentPlayer)) Left(InvalidMove(move))
-    else if (!move.isJump && !canMove(move)) Left(InvalidMove(move))
-    else Right(())
-  }
+  private def validateMove(move: Move, piece: Piece, currentPlayer: Color): Either[BoardError, Unit] = 
+    (move.isValid, piece.color == currentPlayer) match {
+      case (false, _) => Left(InvalidMove(move))
+      case (_, false) => Left(WrongPlayer(piece.color))
+      case _ => Right(())
+    }
 
   /**
    * Checks if the piece should be promoted to a king.

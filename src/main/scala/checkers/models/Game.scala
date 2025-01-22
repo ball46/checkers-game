@@ -1,5 +1,7 @@
 package checkers.models
 
+import scala.annotation.tailrec
+
 /**
  * Represents the status of a game.
  */
@@ -17,6 +19,11 @@ case object GameIsProgress extends GameError
 case object GameAlreadyOver extends GameError
 case object DuplicateGameName extends GameError
 
+case class DirectionalMoves(
+  normalMoves: List[Move] = List.empty,
+  jumpMoves: List[Move] = List.empty
+)
+
 /**
  * Represents a game with its name, board, current player, and status.
  *
@@ -29,7 +36,8 @@ case class Game(
   name: String,
   board: Board,
   currentPlayer: Color,
-  status: GameStatus = InProgress
+  status: GameStatus = InProgress,
+  isContinuation: Boolean = false
 ) {
   /**
    * Makes a move in the game.
@@ -41,27 +49,26 @@ case class Game(
     status match {
       case GameOver(_) => Left(GameAlreadyOver)
       case InProgress =>
-        val allMoves = getValidMovesForPlayer(currentPlayer)
-        val jumpMoves = allMoves.filter { case (_, moves) => moves.exists(_.isJump) }
-        val haveJumpMoves = jumpMoves.nonEmpty
+        val currentMoves = getPossibleMoves(move.from, currentPlayer)
+        val hasJumpMoves = currentMoves.jumpMoves.nonEmpty
+        
+        val isValidMove = if (hasJumpMoves) {
+          currentMoves.jumpMoves.contains(move)
+        } else {
+          currentMoves.normalMoves.contains(move)
+        }
 
-        val validMoves = if (haveJumpMoves) jumpMoves else allMoves
-
-        if (validMoves.values.flatten.exists(_ == move)) {
+        if (isValidMove) {
           board.makeMove(move, currentPlayer).map { newBoard =>
-            val continuationMoves = getPossibleMoves(move.to, currentPlayer, true, newBoard)
-            if (haveJumpMoves && continuationMoves.exists(_.isJump)) {
-              Game(name, newBoard, currentPlayer, status)
+            val continuationMoves = getPossibleMoves(move.to, currentPlayer, newBoard).jumpMoves
+            if (move.isJumpMove && continuationMoves.nonEmpty) {
+              Game(name, newBoard, currentPlayer, status, true)
             } else {
               val nextPlayer = if (currentPlayer == White) Black else White
               val newStatus = determineGameStatus(newBoard, nextPlayer)
               Game(name, newBoard, nextPlayer, newStatus)
             }
-          }.left.map {
-            case InvalidPosition(pos) => GameMovementError(InvalidPosition(pos))
-            case InvalidMove(m) => GameMovementError(InvalidMove(m))
-            case WrongPlayer(color) => GameMovementError(WrongPlayer(color))
-          }
+          }.left.map(GameMovementError.apply)
         } else {
           Left(GameMovementError(InvalidMove(move)))
         }
@@ -75,12 +82,24 @@ case class Game(
    * @return A map of positions to lists of valid moves.
    */
   def getValidMovesForPlayer(player: Color): Map[Position, List[Move]] = {
-    board.pieces.indices.flatMap { y =>
-      board.pieces(y).indices.collect {
-        case x if board(Position(x, y)).toOption.flatten.exists(_.color == player) =>
-          Position(x, y) -> getValidMoves(Position(x, y))
+    val positions = for {
+      y <- board.pieces.indices
+      x <- board.pieces(y).indices
+      pos = Position(x, y)
+      piece <- board(pos).toOption.flatten
+      if piece.color == player
+    } yield {
+      val moves = getPossibleMoves(pos, player)
+      val validMoves = if (isContinuation || moves.jumpMoves.nonEmpty) {
+        moves.jumpMoves
+      } else {
+        moves.normalMoves
       }
-    }.toMap.filter(_._2.nonEmpty)
+      pos -> validMoves
+    }
+
+    val result = positions.filter(_._2.nonEmpty).toMap
+    result
   }
 
   /**
@@ -94,7 +113,10 @@ case class Game(
     board.pieces.indices.exists { y =>
       board.pieces(y).indices.exists { x =>
         val pos = Position(x, y)
-        board(pos).toOption.flatten.exists(_.color == player) && getPossibleMoves(pos, player).nonEmpty
+        board(pos).toOption.flatten.exists(_.color == player) && {
+          val moves = getPossibleMoves(pos, player)
+          moves.jumpMoves.nonEmpty || moves.normalMoves.nonEmpty
+        }
       }
     }
   }
@@ -107,54 +129,94 @@ case class Game(
    * @return The status of the game.
    */
   private def determineGameStatus(board: Board, nextPlayer: Color): GameStatus = {
-    val currentPlayerHasMoves = hasValidMoves(board, currentPlayer)
-    val nextPlayerHasMoves = hasValidMoves(board, nextPlayer)
-
-    if (!currentPlayerHasMoves && !nextPlayerHasMoves) GameOver(None)
-    else if (!nextPlayerHasMoves) GameOver(Some(currentPlayer))
-    else InProgress
+    val currentPlayerMoves = hasValidMoves(board, currentPlayer)
+    val nextPlayerMoves = hasValidMoves(board, nextPlayer)
+    (currentPlayerMoves, nextPlayerMoves) match {
+      case (false, false) => GameOver(None)
+      case (_, false) => GameOver(Some(currentPlayer))
+      case _ => InProgress
+    }
   }
 
-  /**
-   * Retrieves the jump moves for a piece at the given position.
-   *
-   * @param pos           The position of the piece.
-   * @param currentPlayer The current player.
-   * @param board         The board of the game.
-   * @return A list of jump moves.
-   */
-  private def getJumpMoves(pos: Position, currentPlayer: Color, board: Board = board): List[Move] = {
-    val directions = List((-2, -2), (-2, 2), (2, -2), (2, 2))
-    Moves(pos, currentPlayer, directions, board)
+  private def findMovesInDirection(
+    from: Position,
+    dx: Int,
+    dy: Int,
+    currentPlayer: Color,
+    isKing: Boolean,
+    board: Board = board
+  ): DirectionalMoves = {
+    def isValidDirection(move: Move): Boolean = {
+      val moveDirection = move.to.y - move.from.y
+      isKing || (currentPlayer match {
+        case White => moveDirection < 0  // White moves up
+        case Black => moveDirection > 0  // Black moves down
+      })
+    }
+
+    @tailrec
+    def findMoves(
+      currentX: Int,
+      currentY: Int,
+      normalMoves: List[Move],
+      jumpMoves: List[Move]
+    ): DirectionalMoves = {
+      if (currentX < 0 || currentX >= 8 || currentY < 0 || currentY >= 8) {
+        DirectionalMoves(normalMoves, jumpMoves)
+      } else {
+        val currentPos = Position(currentX, currentY)
+        val currentMove = Move(from, currentPos)
+        
+        board(currentPos).toOption.flatten match {
+          case None =>
+            if (!isKing) {
+              if ((currentX - from.x).abs == 1 && isValidDirection(currentMove)) {
+                DirectionalMoves(currentMove :: normalMoves, jumpMoves)
+              } else {
+                DirectionalMoves(normalMoves, jumpMoves)
+              }
+            } else {
+              findMoves(
+                currentX + dx,
+                currentY + dy,
+                currentMove :: normalMoves,
+                jumpMoves
+              )
+            }
+            
+          case Some(piece) if piece.color != currentPlayer =>
+            val jumpX = currentX + dx
+            val jumpY = currentY + dy
+            val jumpPos = Position(jumpX, jumpY)
+            val jumpMove = Move(from, jumpPos)
+            
+            if (jumpPos.isValid && 
+                board(jumpPos).toOption.flatten.isEmpty && 
+                isValidDirection(jumpMove)) {
+              DirectionalMoves(normalMoves, jumpMove :: jumpMoves)
+            } else {
+              DirectionalMoves(normalMoves, jumpMoves)
+            }
+            
+          case Some(_) =>
+            DirectionalMoves(normalMoves, jumpMoves)
+        }
+      }
+    }
+
+    findMoves(from.x + dx, from.y + dy, List.empty, List.empty)
   }
 
-  /**
-   * Retrieves the normal moves for a piece at the given position.
-   *
-   * @param pos           The position of the piece.
-   * @param currentPlayer The current player.
-   * @return A list of normal moves.
-   */
-  private def getNormalMoves(pos: Position, currentPlayer: Color): List[Move] = {
+  private def getMoves(pos: Position, currentPlayer: Color, isKing: Boolean, isContinuation: Boolean, board: Board): DirectionalMoves = {
     val directions = List((-1, -1), (-1, 1), (1, -1), (1, 1))
-    Moves(pos, currentPlayer, directions)
-  }
-
-  /**
-   * Retrieves the moves for a piece at the given position in the specified directions.
-   *
-   * @param pos           The position of the piece.
-   * @param currentPlayer The current player.
-   * @param possibleList  The list of possible directions.
-   * @param board         The board of the game.
-   * @return A list of moves.
-   */
-  private def Moves(pos: Position, currentPlayer: Color, possibleList: List[(Int, Int)], board: Board = board): List[Move] = {
-    val directions = possibleList
-    directions.map { case (dx, dy) =>
-      val move = Move(pos, Position(pos.x + dx, pos.y + dy))
-      move
-    }.filter(board.isValidMove(_, currentPlayer))
+    val moves = directions.foldLeft(DirectionalMoves()) { case (acc, (dx, dy)) =>
+      val newMoves = findMovesInDirection(pos, dx, dy, currentPlayer, isKing, board)
+      DirectionalMoves(
+        normalMoves = acc.normalMoves ++ newMoves.normalMoves,
+        jumpMoves = acc.jumpMoves ++ newMoves.jumpMoves
+      )
+    }
+    moves
   }
 
   /**
@@ -162,46 +224,28 @@ case class Game(
    *
    * @param pos            The position of the piece.
    * @param currentPlayer  The current player.
-   * @param isContinuation Boolean indicating if the move is a continuation.
    * @param board          The board of the game.
    * @return A list of possible moves.
    */
-  private def getPossibleMoves(pos: Position, currentPlayer: Color = currentPlayer, isContinuation: Boolean = false, board: Board = board): List[Move] = {
-    if (isContinuation) {
-      getJumpMoves(pos, currentPlayer, board)
-    } else {
-      val jumpMoves = getJumpMoves(pos, currentPlayer, board)
-      if (jumpMoves.nonEmpty) jumpMoves
-      else getNormalMoves(pos, currentPlayer)
+  private def getPossibleMoves(pos: Position, currentPlayer: Color = currentPlayer, board: Board = board): DirectionalMoves = {
+    val piece = board(pos).toOption.flatten
+    piece match {
+      case Some(p) => getMoves(pos, currentPlayer, p.isKing, isContinuation, board)
+      case None => DirectionalMoves()
     }
   }
-
-  /**
-   * Retrieves the valid moves for a piece at the given position.
-   *
-   * @param position The position of the piece.
-   * @return A list of valid moves.
-   */
-  def getValidMoves(position: Position): List[Move] = {
-    status match {
-      case GameOver(_) => List.empty
-      case InProgress =>
-        board(position).toOption.flatten match {
-          case Some(piece) if piece.color == currentPlayer => getPossibleMoves(position)
-          case _ => List.empty
-        }
+  
+  private def getListMoves(allMoves: DirectionalMoves): List[Move] = {
+    allMoves.jumpMoves match {
+      case jumps if jumps.nonEmpty => jumps
+      case _ if !isContinuation => allMoves.normalMoves
+      case _ => List.empty
     }
   }
 }
 
 object Game {
-  /**
-   * Creates an initial game with two players.
-   *
-   * @param name The name of the game.
-   * @return The initial game.
-   */
-  def initialTuneBasePlayer(name: String): Game = Game(name,Board.initial, White)
+  private def initial(name: String): Game = Game(name, Board.initial, White, InProgress)
 
   /**
    * Creates an initial single-player game.
@@ -209,5 +253,13 @@ object Game {
    * @param name The name of the game.
    * @return The initial game.
    */
-  def initialSinglePlayer(name: String): Game = Game(name, Board.initial, White)
+  def initialSinglePlayer(name: String): Game = initial(name)
+
+  /**
+   * Creates an initial game with two players.
+   *
+   * @param name The name of the game.
+   * @return The initial game.
+   */
+  def initialTuneBasePlayer(name: String): Game = initial(name)
 }
