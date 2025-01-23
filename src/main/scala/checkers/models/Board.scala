@@ -26,18 +26,24 @@ case class Board(pieces: Vector[Vector[Option[Piece]]]) {
   private def updated(pos: Position, piece: Option[Piece]): Either[BoardError, Board] =
     if (!pos.isValid) Left(InvalidPosition(pos))
     else Right(Board(pieces.updated(pos.y, pieces(pos.y).updated(pos.x, piece))))
-  
-  private def isDiagonalPathClear(move: Move): Boolean = {
+
+  /**
+   * Checks if the diagonal path is clear for the move.
+   *
+   * @param move The move to check.
+   * @return True if the path is clear, false otherwise.
+   */
+  def isDiagonalPathClear(move: Move): Boolean = {
     val dx = move.to.x - move.from.x
     val dy = move.to.y - move.from.y
+    val piece = apply(move.from).toOption.flatten.get
     
-    if (dx.abs != dy.abs) false  // ต้องเป็นแนวทแยงเท่านั้น
+    if (!move.isValid && !isValidDirection(move, piece)) false
     else {
       val stepX = dx / dx.abs
       val stepY = dy / dy.abs
       val steps = dx.abs - 1
-
-      // ตรวจสอบทุกช่องระหว่างจุดเริ่มต้นและจุดสิ้นสุด
+      
       (1 to steps).forall { i =>
         val checkPos = Position(
           move.from.x + (stepX * i),
@@ -45,7 +51,7 @@ case class Board(pieces: Vector[Vector[Option[Piece]]]) {
         )
         apply(checkPos).fold(
           _ => false,
-          _.isEmpty  // ต้องเป็นช่องว่างทั้งหมด
+          _.isEmpty
         )
       }
     }
@@ -91,20 +97,6 @@ case class Board(pieces: Vector[Vector[Option[Piece]]]) {
           .find(isCapturable)
           
       case NoJump => None
-    }
-  }
-
-  /**
-   * Checks if a jump move (two squares) is valid.
-   * 
-   * @param move The move to check.
-   * @param currentPlayer The current player making the move.
-   * @return True if the move is valid, false otherwise.
-   */
-  private def canJump(move: Move, currentPlayer: Color): Boolean = {
-    findCapturedPiece(move, currentPlayer).exists { pos =>
-      apply(move.to).toOption.flatten.isEmpty &&
-      apply(pos).toOption.flatten.exists(_.color != currentPlayer)
     }
   }
 

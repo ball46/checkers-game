@@ -122,7 +122,7 @@ class GameServiceImpl extends GameService {
         game <- games.get(gameId).toRight(GameNotFound(gameId))
         newGame <- game.makeMove(Move(from, to))
         _ = games.update(gameId, newGame)
-        validMoves = getValidMoves(newGame).filter(_._2.nonEmpty)
+        validMoves = newGame.getValidMovesForPlayer(newGame.currentPlayer)
       } yield GameResponse(gameId, game.name, newGame.board, newGame.currentPlayer, newGame.status, validMoves)
     }
   }

@@ -38,6 +38,11 @@ case class Move(from: Position, to: Position) {
     dx == dy
   }
 
+  /**
+   * Determines the type of jump for the move.
+   *
+   * @return The type of jump.
+   */
   def getJumpType: JumpType = {
     val dx = (from.x - to.x).abs
     if (dx == 2) NormalJump
@@ -45,6 +50,11 @@ case class Move(from: Position, to: Position) {
     else NoJump
   }
 
+  /**
+   * Checks if the move is a jump move.
+   *
+   * @return True if the move is a jump move, false otherwise.
+   */
   def isJumpMove: Boolean = getJumpType != NoJump
 
   private def direction: (Int, Int) = {
