@@ -13,6 +13,8 @@ case object NoJump extends JumpType         // regular move
  */
 case class MoveRequest(from: Position, to: Position)
 
+case class Direction(x: Int, y: Int)
+
 /**
  * Represents a move in the game.
  *
@@ -45,9 +47,11 @@ case class Move(from: Position, to: Position) {
    */
   def getJumpType: JumpType = {
     val dx = (from.x - to.x).abs
-    if (dx == 2) NormalJump
-    else if (dx > 2) LongRangeJump
-    else NoJump
+    dx match {
+      case 2 => NormalJump
+      case n if n > 2 => LongRangeJump
+      case _ => NoJump
+    }
   }
 
   /**
@@ -56,15 +60,7 @@ case class Move(from: Position, to: Position) {
    * @return True if the move is a jump move, false otherwise.
    */
   def isJumpMove: Boolean = getJumpType != NoJump
-
-  private def direction: (Int, Int) = {
-    val dx = to.x - from.x
-    val dy = to.y - from.y
-    val stepX = if (dx > 0) 1 else -1
-    val stepY = if (dy > 0) 1 else -1
-    (stepX, stepY)
-  }
-
+  
   /**
    * Finds the position of the piece to be captured (if it is a jump move).
    *
@@ -72,9 +68,22 @@ case class Move(from: Position, to: Position) {
    */
   def capturedPosition: Option[Position] = {
     if (!isJumpMove) None
-    else Some(Position(
-      from.x + direction._1,
-      from.y + direction._2
-    ))
+    else {
+      val dir = direction
+      Some(Position(from.x + dir.x, from.y + dir.y))
+    }
   }
+
+  private def direction: Direction = {
+    val dx = to.x - from.x
+    val dy = to.y - from.y
+    Direction(
+      x = if (dx > 0) 1 else -1,
+      y = if (dy > 0) 1 else -1
+    )
+  }
+}
+
+object Move {
+  def fromRequest(req: MoveRequest): Move = Move(req.from, req.to)
 }

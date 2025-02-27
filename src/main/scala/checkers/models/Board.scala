@@ -73,30 +73,33 @@ case class Board(pieces: Vector[Vector[Option[Piece]]]) {
     }
   }
 
-  private def findCapturedPiece(move: Move, currentPlayer: Color): Option[Position] = {
-    def isCapturable(pos: Position): Boolean = 
+  private def findCapturedPiece(move: Move, currentPlayer: Color): List[Position] = {
+    def isCapturable(pos: Position): Boolean =
       apply(pos).toOption.flatten.exists(_.color != currentPlayer)
 
     move.getJumpType match {
       case NormalJump =>
-        // Normal 2-square jump
+        // ตรวจสอบตำแหน่งกลาง (กระโดด 2 ช่อง)
         val midX = (move.from.x + move.to.x) / 2
         val midY = (move.from.y + move.to.y) / 2
         val midPos = Position(midX, midY)
-        Some(midPos).filter(isCapturable)
-        
+        if (isCapturable(midPos)) List(midPos) else Nil
+
       case LongRangeJump =>
-        // King's jump - find first enemy piece in path
+        // สำหรับ King: ตรวจสอบทุกตำแหน่งในเส้นทาง
         val dx = move.to.x - move.from.x
         val dy = move.to.y - move.from.y
-        val stepX = if (dx > 0) 1 else -1
-        val stepY = if (dy > 0) 1 else -1
-        
+        val stepX = dx.sign
+        val stepY = dy.sign
+
         (1 until dx.abs)
-          .map(i => Position(move.from.x + (stepX * i), move.from.y + (stepY * i)))
-          .find(isCapturable)
-          
-      case NoJump => None
+          .flatMap { i =>
+            val checkPos = Position(move.from.x + (stepX * i), move.from.y + (stepY * i))
+            Some(checkPos).filter(isCapturable)
+          }
+          .toList
+
+      case NoJump => Nil
     }
   }
 
@@ -108,40 +111,40 @@ case class Board(pieces: Vector[Vector[Option[Piece]]]) {
    * @return Either a BoardError or the updated Board.
    */
   def makeMove(move: Move, currentPlayer: Color): Either[BoardError, Board] = {
-    def processMove(piece: Piece, board: Board): Either[BoardError, Board] = {
-      for {
-        _ <- validateMove(move, piece, currentPlayer)
-        emptyBoard <- board.updated(move.from, None)
-        promotedPiece = shouldPromote(move.to, piece)
-        updatedBoard <- emptyBoard.updated(move.to, Some(promotedPiece))
-        capturedBoard <- findCapturedPiece(move, currentPlayer).fold[Either[BoardError, Board]](
-          Right(updatedBoard)
-        )(pos => updatedBoard.updated(pos, None))
-      } yield capturedBoard
-    }
-
     for {
-      piece <- getPieceAt(move.from)
-      result <- processMove(piece, this)
-    } yield result
+      piece <- validateMove(move, currentPlayer)
+      emptyBoard <- updated(move.from, None)
+      updatedPiece = shouldPromote(move.to, piece)
+      placedBoard <- emptyBoard.updated(move.to, Some(updatedPiece))
+      finalBoard <- captureIfNeeded(move, currentPlayer, placedBoard)
+    } yield finalBoard
   }
-
-  private def getPieceAt(pos: Position): Either[BoardError, Piece] = 
-    apply(pos).flatMap(_.toRight(InvalidMove(Move(pos, pos))))
 
   /**
    * Validates the move according to the game rules.
    *
    * @param move          The move to validate.
-   * @param piece         The piece making the move.
    * @param currentPlayer The current player making the move.
    * @return Either a BoardError or Unit if the move is valid.
    */
-  private def validateMove(move: Move, piece: Piece, currentPlayer: Color): Either[BoardError, Unit] = 
-    (move.isValid, piece.color == currentPlayer) match {
-      case (false, _) => Left(InvalidMove(move))
-      case (_, false) => Left(WrongPlayer(piece.color))
-      case _ => Right(())
+  private def validateMove(move: Move, currentPlayer: Color): Either[BoardError, Piece] = {
+    if (!move.isValid) Left(InvalidMove(move))
+    else {
+      apply(move.from) match {
+        case Right(Some(piece)) if piece.color == currentPlayer => Right(piece)
+        case Right(Some(piece)) => Left(WrongPlayer(piece.color))
+        case _ => Left(InvalidMove(move))
+      }
+    }
+  }
+
+  private def captureIfNeeded(move: Move, currentPlayer: Color, board: Board): Either[BoardError, Board] =
+    move.capturedPosition.flatMap(pos => board.apply(pos).toOption.flatten) match {
+      case Some(piece) if piece.color != currentPlayer =>
+        move.capturedPosition.fold[Either[BoardError, Board]](Right(board)) { cp =>
+          board.updated(cp, None)
+        }
+      case _ => Right(board)
     }
 
   /**

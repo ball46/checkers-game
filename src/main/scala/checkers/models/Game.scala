@@ -57,44 +57,61 @@ case class Game(
     status match {
       case GameOver(_) => Left(GameAlreadyOver)
       case InProgress =>
-        val currentMoves = getPossibleMoves(move.from, currentPlayer)
-        val hasJumpMoves = currentMoves.jumpMoves.nonEmpty
-        
-        val isValidMove = if (isContinuation) {
-          // During continuation, only allow moves from last position
-          lastMovedPosition.contains(move.from) && currentMoves.jumpMoves.contains(move)
-        } else if (hasJumpMoves) {
-          currentMoves.jumpMoves.contains(move)
-        } else {
-          currentMoves.normalMoves.contains(move)
-        }
-
-        if (isValidMove) {
-          board.makeMove(move, currentPlayer).map { newBoard =>
-            val continuationMoves = getPossibleMoves(move.to, currentPlayer, newBoard).jumpMoves
-            if (move.isJumpMove && !board.isDiagonalPathClear(move) && continuationMoves.nonEmpty) {
-              // Continue with same player if more jumps available
-              copy(
-                board = newBoard,
-                isContinuation = true,
-                lastMovedPosition = Some(move.to)
-              )
-            } else {
-              val nextPlayer = if (currentPlayer == White) Black else White
-              val newStatus = determineGameStatus(newBoard, nextPlayer)
-              copy(
-                board = newBoard,
-                currentPlayer = nextPlayer,
-                status = newStatus,
-                isContinuation = false,
-                lastMovedPosition = None
-              )
-            }
-          }.left.map(GameMovementError.apply)
-        } else {
-          Left(GameMovementError(InvalidMove(move)))
-        }
+        for {
+          currentMoves <- Right(getPossibleMoves(move.from, currentPlayer))
+          _ <- validateMoveConditions(move, currentMoves)
+          newBoard <- board.makeMove(move, currentPlayer).left.map(GameMovementError.apply)
+          updatedGame = updateGameAfterMove(move, newBoard)
+        } yield updatedGame
     }
+  }
+
+  private def validateMoveConditions(move: Move, currentMoves: DirectionalMoves): Either[GameError, Boolean] = {
+    if (isContinuation) {
+      // ตรวจสอบเฉพาะการเคลื่อนที่ต่อเนื่อง
+      Either.cond(
+        lastMovedPosition.contains(move.from) && currentMoves.jumpMoves.contains(move),
+        true,
+        GameMovementError(InvalidMove(move))
+      )
+    } else {
+      val hasJumpMoves = currentMoves.jumpMoves.nonEmpty
+      Either.cond(
+        if (hasJumpMoves) currentMoves.jumpMoves.contains(move)
+        else currentMoves.normalMoves.contains(move),
+        true,
+        GameMovementError(InvalidMove(move))
+      )
+    }
+  }
+
+  private def updateGameAfterMove(move: Move, newBoard: Board): Game = {
+    if (shouldContinueJump(move, newBoard)) continueMoveForJump(move, newBoard)
+    else finishMove(newBoard)
+  }
+
+  private def shouldContinueJump(move: Move, newBoard: Board): Boolean =
+    move.isJumpMove &&
+      !board.isDiagonalPathClear(move) &&
+      getPossibleMoves(move.to, currentPlayer, newBoard).jumpMoves.nonEmpty
+
+  private def continueMoveForJump(move: Move, newBoard: Board): Game =
+    copy(
+      board = newBoard,
+      isContinuation = true,
+      lastMovedPosition = Some(move.to)
+    )
+
+  private def finishMove(newBoard: Board): Game = {
+    val nextPlayer = if (currentPlayer == White) Black else White
+    val newStatus = determineGameStatus(newBoard, nextPlayer)
+    copy(
+      board = newBoard,
+      currentPlayer = nextPlayer,
+      status = newStatus,
+      isContinuation = false,
+      lastMovedPosition = None
+    )
   }
 
   /**
@@ -110,28 +127,29 @@ case class Game(
       validMovesList(lastMove, player)
     } else {
       // Collect all moves into StackMoves
-      val stackMoves = (for {
-        y <- board.pieces.indices
-        x <- board.pieces(y).indices
-        pos = Position(x, y)
-        piece <- board(pos).toOption.flatten
-        if piece.color == player
-      } yield {
-        val moves = getPossibleMoves(pos, player)
-        (
-          pos -> moves.normalMoves,
-          pos -> moves.jumpMoves
-        )
-      }).foldLeft(StackMoves()) { case (acc, (normal, jump)) =>
-        StackMoves(
-          normalMoves = if (normal._2.nonEmpty) acc.normalMoves + normal else acc.normalMoves,
-          jumpMoves = if (jump._2.nonEmpty) acc.jumpMoves + jump else acc.jumpMoves
-        )
-      }
+      val stackMoves = collectStackMoves(player)
 
       // Return jump moves if available, otherwise normal moves
       if (stackMoves.jumpMoves.nonEmpty) stackMoves.jumpMoves
       else stackMoves.normalMoves
+    }
+  }
+
+  private def collectStackMoves(player: Color): StackMoves = {
+    (for {
+      y <- board.pieces.indices
+      x <- board.pieces(y).indices
+      pos = Position(x, y)
+      piece <- board(pos).toOption.flatten
+      if piece.color == player
+    } yield {
+      val moves = getPossibleMoves(pos, player)
+      (pos -> moves.normalMoves, pos -> moves.jumpMoves)
+    }).foldLeft(StackMoves()) { case (acc, (normal, jump)) =>
+      StackMoves(
+        normalMoves = if (normal._2.nonEmpty) acc.normalMoves + normal else acc.normalMoves,
+        jumpMoves = if (jump._2.nonEmpty) acc.jumpMoves + jump else acc.jumpMoves
+      )
     }
   }
 
@@ -251,7 +269,7 @@ case class Game(
             val jumpPos = Position(jumpX, jumpY)
             val jumpMove = Move(from, jumpPos)
             
-            if (jumpPos.isValid && 
+            if (jumpPos.isValid &&
                 board(jumpPos).toOption.flatten.isEmpty && 
                 isValidDirection(jumpMove)) {
               DirectionalMoves(normalMoves, jumpMove :: jumpMoves)
