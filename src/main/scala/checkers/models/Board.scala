@@ -108,22 +108,16 @@ case class Board(pieces: Vector[Vector[Option[Piece]]]) {
    * @return Either a BoardError or the updated Board.
    */
   def makeMove(move: Move, currentPlayer: Color): Either[BoardError, Board] = {
-    def processMove(piece: Piece, board: Board): Either[BoardError, Board] = {
-      for {
-        _ <- validateMove(move, piece, currentPlayer)
-        emptyBoard <- board.updated(move.from, None)
-        promotedPiece = shouldPromote(move.to, piece)
-        updatedBoard <- emptyBoard.updated(move.to, Some(promotedPiece))
-        capturedBoard <- findCapturedPiece(move, currentPlayer).fold[Either[BoardError, Board]](
-          Right(updatedBoard)
-        )(pos => updatedBoard.updated(pos, None))
-      } yield capturedBoard
-    }
-
     for {
       piece <- getPieceAt(move.from)
-      result <- processMove(piece, this)
-    } yield result
+      _ <- validateMove(move, piece, currentPlayer)
+      emptyBoard <- updated(move.from, None)
+      promotedPiece = shouldPromote(move.to, piece)
+      updatedBoard <- emptyBoard.updated(move.to, Some(promotedPiece))
+      capturedBoard <- findCapturedPiece(move, currentPlayer).fold[Either[BoardError, Board]](
+        Right(updatedBoard)
+      )(pos => updatedBoard.updated(pos, None))
+    } yield capturedBoard
   }
 
   private def getPieceAt(pos: Position): Either[BoardError, Piece] = 
